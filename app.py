@@ -18,6 +18,8 @@ if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "username" not in st.session_state:
     st.session_state["username"] = None
+if "page_mode" not in st.session_state:
+    st.session_state["page_mode"] = None
 
 
 import tensorflow as tf
@@ -30,7 +32,7 @@ def load_emotion_model():
     try:
         # Option 1 – Try loading with TensorFlow’s legacy-based deserializer
         model = keras.models.load_model("model/model.keras", compile=False)
-        st.success("Emotion model loaded successfully ✅")
+        #st.success("Emotion model loaded successfully ✅")
         return model
     except Exception as e:
         st.warning("Legacy Keras deserialization failed. Attempting fallback...")
@@ -38,7 +40,7 @@ def load_emotion_model():
         try:
             # Option 2 – Try using the H5 loader (for older model files)
             model = keras.models.load_model("model/model.h5", compile=False)
-            st.success("Model loaded via H5 legacy loader ✅")
+            #st.success("Model loaded via H5 legacy loader ✅")
             return model
         except Exception as e2:
             st.error(f"❌ Error loading model: {e2}")
@@ -188,6 +190,28 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+.mode-button {
+  display: inline-block;
+  margin: 10px;
+}
+.mode-button button {
+  background: linear-gradient(90deg, #ffafbd, #ffc3a0);
+  color: white !important;
+  font-weight: 700 !important;
+  border-radius: 0.8em;
+  box-shadow: 0 3px 10px rgba(255, 175, 189, 0.4);
+  transition: all 0.3s ease;
+  padding: 0.6em 1.2em;
+  border: none;
+}
+.mode-button button:hover {
+  transform: scale(1.05);
+  background: linear-gradient(90deg, #84fab0, #8fd3f4);
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 # --- Create SQLite user table for login/signup ---
@@ -218,9 +242,14 @@ def login_signup_box():
             if authenticate_user(username, password):
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = username
+
+                # --- Force user to start from mode selection after login ---
+                st.session_state["page_mode"] = None
+
                 st.rerun()
             else:
                 msg = "Invalid username or password."
+
 
     if msg:
         col_msg = "⚠️" if not success else "✅"
@@ -241,6 +270,29 @@ def logout():
     st.session_state["username"] = None
     st.rerun()
 
+# --- Mode selection displayed only once ---
+if st.session_state["page_mode"] is None:
+    st.markdown("<h2 style='text-align:center; color:#2b6777;'>Choose Detection Mode</h2>", unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown('<div class="mode-button">', unsafe_allow_html=True)
+        rt_clicked = st.button("🎥 Real-Time Detector", key="real_time_mode")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col2:
+        st.markdown('<div class="mode-button">', unsafe_allow_html=True)
+        txt_clicked = st.button("💬 Text Emotion Detector", key="text_mode")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    if rt_clicked:
+        st.session_state["page_mode"] = "Real-Time Emotion Detector"
+        st.rerun()
+    elif txt_clicked:
+        st.session_state["page_mode"] = "Text Emotion Detector"
+        st.rerun()
+
+
 
 # --- Main App: Sidebar and emotion detector ---
 st.set_page_config(page_title="Live Emotion Detector", layout="centered")
@@ -252,265 +304,275 @@ logout_clicked = st.sidebar.button("🚪 Logout")
 if logout_clicked:
     logout()
 
-st.sidebar.title("🎛️ Filters")
+# --- Return to Mode Selection Button ---
+if st.session_state.get("page_mode") in ["Real-Time Emotion Detector", "Text Emotion Detector"]:
+    return_clicked = st.sidebar.button("🔙 Return to Mode Selection", key="return_mode")
+    if return_clicked:
+        st.session_state["page_mode"] = None
+        st.rerun()
 
-sensitivity = st.sidebar.slider("Detection Sensitivity", 0.01, 0.5, 0.3)
-st.sidebar.subheader("Lower the sensitivity better is the result!")
-selected_emotions = st.sidebar.multiselect(
-    "Select Emotions to Display",
-    ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"],
-    default=["Happy", "Sad", "Angry"]
-)
-frame_rate = st.sidebar.slider("Frame Rate (FPS)", 1, 30, 10)
+# --- Real-Time Emotion Detection Page ---
+if st.session_state["page_mode"] == "Real-Time Emotion Detector":
+    st.sidebar.title("🎛️ Filters")
 
-
-
-user_name = st.session_state.get("username", "User")
-st.markdown(
-    f"""
-    <div style='
-        margin-top: -10px;
-        background: rgba(255, 255, 255, 0.7);
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 3px 8px rgba(0,0,0,0.1);
-        font-size: 17px;
-        color: #2b6777;
-        font-family: "Poppins", sans-serif;
-    '>
-        👋 Hello <b>{user_name}</b>! Welcome to <b>Vibe Check AI</b> — your real-time emotion detection portal.<br>
-        We combine computer vision and AI to analyze facial expressions.<br>
-        Take a live photo to see which emotion you are experiencing right now.<br>
-        Let's explore the science of emotions — one smile at a time!
-    </div>
-    """, unsafe_allow_html=True
-)
-
-def dice_coef(y_true, y_pred, smooth=1e-6):
-    y_true_f = K.flatten(y_true)
-    y_pred_f = K.flatten(y_pred)
-    intersection = K.sum(y_true_f * y_pred_f)
-    return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+    sensitivity = st.sidebar.slider("Detection Sensitivity", 0.01, 0.3, 0.02)
+    st.sidebar.subheader("Lower the sensitivity better is the result!")
+    selected_emotions = st.sidebar.multiselect(
+        "Select Emotions to Display",
+        ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"],
+        default=["Happy", "Sad", "Angry"]
+    )
+    frame_rate = st.sidebar.slider("Frame Rate (FPS)", 1, 30, 10)
 
 
-face_cascade = cv2.CascadeClassifier("haarcascades/haarcascade_frontalface_default.xml")
-emotion_labels = ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"]
 
-st.subheader("📷 Capture your emotion!")
-
-image_data = st.camera_input("Take a picture")
-
-def speak_text(text, lang='en'):
-    tts = gTTS(text=text, lang=lang)
-    audio_fp = io.BytesIO()
-    tts.write_to_fp(audio_fp)
-    audio_fp.seek(0)
-    return audio_fp
-
-if image_data is not None:
-    img = Image.open(image_data)
-
-    results = detect_faces_and_emotions(
-        img,
-        face_cascade,
-        model,
-        emotion_labels,
-        threshold=sensitivity,
-        selected_emotions=selected_emotions,
+    user_name = st.session_state.get("username", "User")
+    st.markdown(
+        f"""
+        <div style='
+            margin-top: -10px;
+            background: rgba(255, 255, 255, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.1);
+            font-size: 17px;
+            color: #2b6777;
+            font-family: "Poppins", sans-serif;
+        '>
+            👋 Hello <b>{user_name}</b>! Welcome to <b>Vibe Check AI</b> — your real-time emotion detection portal.<br>
+            We combine computer vision and AI to analyze facial expressions.<br>
+            Take a live photo to see which emotion you are experiencing right now.<br>
+            Let's explore the science of emotions — one smile at a time!
+        </div>
+        """, unsafe_allow_html=True
     )
 
-    if results:
-        combined_results = {}
-        for emotion, prob in results:
-            if emotion in combined_results:
-                combined_results[emotion] = max(combined_results[emotion], prob)
+    def dice_coef(y_true, y_pred, smooth=1e-6):
+        y_true_f = K.flatten(y_true)
+        y_pred_f = K.flatten(y_pred)
+        intersection = K.sum(y_true_f * y_pred_f)
+        return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+
+
+    face_cascade = cv2.CascadeClassifier("haarcascades/haarcascade_frontalface_default.xml")
+    emotion_labels = ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"]
+
+    st.subheader("📷 Capture your emotion!")
+
+    image_data = st.camera_input("Take a picture")
+
+    def speak_text(text, lang='en'):
+        tts = gTTS(text=text, lang=lang)
+        audio_fp = io.BytesIO()
+        tts.write_to_fp(audio_fp)
+        audio_fp.seek(0)
+        return audio_fp
+
+    if image_data is not None:
+        img = Image.open(image_data)
+
+        results = detect_faces_and_emotions(
+            img,
+            face_cascade,
+            model,
+            emotion_labels,
+            threshold=sensitivity,
+            selected_emotions=selected_emotions,
+        )
+
+        if results:
+            combined_results = {}
+            for emotion, prob in results:
+                if emotion in combined_results:
+                    combined_results[emotion] = max(combined_results[emotion], prob)
+                else:
+                    combined_results[emotion] = prob
+
+            filtered_results = [
+                (e, p) for e, p in combined_results.items()
+                if (not selected_emotions or e in selected_emotions) and p > 0
+            ]
+            filtered_results = sorted(filtered_results, key=lambda x: x[1], reverse=True)
+
+            if filtered_results:
+                st.success("Emotion(s) Detected ✅")
+                for emotion, prob in filtered_results:
+                    suggestion = get_suggestion(emotion)
+                    joke = get_joke(emotion)
+                    st.markdown(f"**{emotion}**: {prob:.2f}%")
+                    st.info(f"💡 Suggestion: {suggestion}")
+                    st.write(f"😂 Joke: {joke}")
+                    user_name = st.session_state.get("username", "dear")
+                    speak_str = (
+                        f"Hie {user_name}! you look {emotion} today with a confidence of {prob:.0f} percent. I want to suggest you that: {suggestion}. "
+                        f"Here is a joke to lift up your mood: {joke} hahahaheheheh. hope you Have a great day ahead"
+                    )
+                    audio_fp = speak_text(speak_str)
+                    st.audio(audio_fp, format="audio/mp3")
             else:
-                combined_results[emotion] = prob
-
-        filtered_results = [
-            (e, p) for e, p in combined_results.items()
-            if (not selected_emotions or e in selected_emotions) and p > 0
-        ]
-        filtered_results = sorted(filtered_results, key=lambda x: x[1], reverse=True)
-
-        if filtered_results:
-            st.success("Emotion(s) Detected ✅")
-            for emotion, prob in filtered_results:
-                suggestion = get_suggestion(emotion)
-                joke = get_joke(emotion)
-                st.markdown(f"**{emotion}**: {prob:.2f}%")
-                st.info(f"💡 Suggestion: {suggestion}")
-                st.write(f"😂 Joke: {joke}")
-                user_name = st.session_state.get("username", "dear")
-                speak_str = (
-                    f"Hie {user_name}! you look {emotion} today with a confidence of {prob:.0f} percent. I want to suggest you that: {suggestion}. "
-                    f"Here is a joke to lift up your mood: {joke} hahahaheheheh. hope you Have a great day ahead"
-                )
-                audio_fp = speak_text(speak_str)
-                st.audio(audio_fp, format="audio/mp3")
-        else:
-            st.warning("No emotion detected with the current settings. Change Your Emotion selection to get the appropriate results!")
+                st.warning("No emotion detected with the current settings. Change Your Emotion selection to get the appropriate results!")
 
 
 
-# ---- LIVE EMOTION SUMMARY (Camera-Based) ----
-import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
+    # ---- LIVE EMOTION SUMMARY (Camera-Based) ----
+    import streamlit as st
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import pandas as pd
 
-# --- FIX CRITICAL INITIALIZATION (DO THIS NEAR THE TOP OF YOUR APP) ---
-if "emotion_history" not in st.session_state:
-    st.session_state["emotion_history"] = []
+    # --- FIX CRITICAL INITIALIZATION (DO THIS NEAR THE TOP OF YOUR APP) ---
+    if "emotion_history" not in st.session_state:
+        st.session_state["emotion_history"] = []
 
-st.markdown("<hr>", unsafe_allow_html=True)
-st.header("📊 Live Emotion Summary Dashboard")
-st.caption("Visual representation of your detected live facial emotions — updated dynamically after each capture.")
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.header("📊 Live Emotion Summary Dashboard")
+    st.caption("Visual representation of your detected live facial emotions — updated dynamically after each capture.")
 
-# --- STORE LATEST EMOTION ---
-if image_data is not None and 'filtered_results' in locals() and filtered_results:
-    top_emotion = filtered_results[0][0]
-    st.session_state["emotion_history"].append(top_emotion)
+    # --- STORE LATEST EMOTION ---
+    if image_data is not None and 'filtered_results' in locals() and filtered_results:
+        top_emotion = filtered_results[0][0]
+        st.session_state["emotion_history"].append(top_emotion)
 
-if len(st.session_state["emotion_history"]) > 0:
-    emotion_df = pd.DataFrame({
-        "Capture": list(range(1, len(st.session_state["emotion_history"]) + 1)),
-        "Emotion": st.session_state["emotion_history"]
-    })
-    freq = emotion_df["Emotion"].value_counts()
+    if len(st.session_state["emotion_history"]) > 0:
+        emotion_df = pd.DataFrame({
+            "Capture": list(range(1, len(st.session_state["emotion_history"]) + 1)),
+            "Emotion": st.session_state["emotion_history"]
+        })
+        freq = emotion_df["Emotion"].value_counts()
 
-    # --- CONFIGURE STYLE ONCE ---
-    sns.set_style("whitegrid")
+        # --- CONFIGURE STYLE ONCE ---
+        sns.set_style("whitegrid")
 
-    # Create pastel color scheme once
-    pastel_colors = ["#f8a5c2", "#fdd6bd", "#fff5b7", "#a1c4fd", "#c7a9e9", "#b7e4c7"]
+        # Create pastel color scheme once
+        pastel_colors = ["#f8a5c2", "#fdd6bd", "#fff5b7", "#a1c4fd", "#c7a9e9", "#b7e4c7"]
 
-    # --- LINE PLOT (Emotion over captures) ---
-    fig1, ax1 = plt.subplots(figsize=(5.5, 3))
-    fig1.patch.set_alpha(0)
-    ax1.set_facecolor((0, 0, 0, 0))
+        # --- LINE PLOT (Emotion over captures) ---
+        fig1, ax1 = plt.subplots(figsize=(5.5, 3))
+        fig1.patch.set_alpha(0)
+        ax1.set_facecolor((0, 0, 0, 0))
 
-    sns.lineplot(data=emotion_df, x="Capture", y="Emotion", hue="Emotion",
-                 marker="o", palette=pastel_colors[:len(emotion_df["Emotion"].unique())], ax=ax1)
+        sns.lineplot(data=emotion_df, x="Capture", y="Emotion", hue="Emotion",
+                    marker="o", palette=pastel_colors[:len(emotion_df["Emotion"].unique())], ax=ax1)
 
-    ax1.set_title("Emotion Trend Over Session", color="#2b6777", fontsize=13, weight="bold", pad=8)
-    ax1.set_xlabel("Capture #", fontsize=11)
-    ax1.set_ylabel("Emotion Label", fontsize=11)
-    ax1.grid(alpha=0.2, linestyle="--")
-    sns.despine()
-    st.pyplot(fig1, transparent=True, clear_figure=True)
+        ax1.set_title("Emotion Trend Over Session", color="#2b6777", fontsize=13, weight="bold", pad=8)
+        ax1.set_xlabel("Capture #", fontsize=11)
+        ax1.set_ylabel("Emotion Label", fontsize=11)
+        ax1.grid(alpha=0.2, linestyle="--")
+        sns.despine()
+        st.pyplot(fig1, transparent=True, clear_figure=True)
 
-    # --- BAR PLOT (Emotion frequency) ---
-    fig2, ax2 = plt.subplots(figsize=(5, 2.8))
-    fig2.patch.set_alpha(0)
-    ax2.set_facecolor((0, 0, 0, 0))
+        # --- BAR PLOT (Emotion frequency) ---
+        fig2, ax2 = plt.subplots(figsize=(5, 2.8))
+        fig2.patch.set_alpha(0)
+        ax2.set_facecolor((0, 0, 0, 0))
 
-    sns.barplot(x=freq.index, y=freq.values, palette=pastel_colors[:len(freq)], ax=ax2)
-    ax2.set_title("Emotion Occurrence Summary", color="#2b6777", fontsize=12, weight="semibold")
-    ax2.set_xlabel("Emotion", fontsize=10)
-    ax2.set_ylabel("Count", fontsize=10)
-    ax2.grid(alpha=0.15, linestyle="--")
-    sns.despine()
-    st.pyplot(fig2, transparent=True, clear_figure=True)
+        sns.barplot(x=freq.index, y=freq.values, palette=pastel_colors[:len(freq)], ax=ax2)
+        ax2.set_title("Emotion Occurrence Summary", color="#2b6777", fontsize=12, weight="semibold")
+        ax2.set_xlabel("Emotion", fontsize=10)
+        ax2.set_ylabel("Count", fontsize=10)
+        ax2.grid(alpha=0.15, linestyle="--")
+        sns.despine()
+        st.pyplot(fig2, transparent=True, clear_figure=True)
 
-    # --- Display Insights ---
-    dominant = freq.idxmax()
-    st.success(f"Dominant Emotion Detected: **{dominant}** 🧠")
+        # --- Display Insights ---
+        dominant = freq.idxmax()
+        st.success(f"Dominant Emotion Detected: **{dominant}** 🧠")
 
-    insights = {
-        "Happy": "Consistently positive mood — reflects engagement and optimism.",
-        "Sad": "Emotional fatigue observed — take short breaks to refresh your mindset.",
-        "Neutral": "Steady and balanced mood — ideal for sustained focus.",
-        "Angry": "Elevated stress — practice calm breathing or step away briefly.",
-        "Fear": "Anxious signals detected — try confidence-building tasks.",
-        "Surprise": "Spike in excitement detected — spontaneous emotional reaction.",
-        "Disgust": "Possible aversion or discomfort — maybe due to content or environment.",
-    }
-    st.info(f"🧩 Insight: {insights.get(dominant, 'Maintain awareness of your current emotional state.')}")
-else:
-    st.warning("No emotions recorded yet. Capture an image to start building the emotion summary.")
-
-# ---- EMOTION INSIGHTS ----
-st.markdown("<hr>", unsafe_allow_html=True)
-st.header("🧩 Live Emotion Insights")
-st.caption("These insights are generated from your most recent camera-based emotion detection.")
-
-insight_map = {
-    "Happy": "High positivity and mental energy — ideal state for collaboration and focus.",
-    "Sad": "Low mood detected — consider activities like music or fresh air to refresh yourself.",
-    "Angry": "Elevated stress or frustration — deep breathing and mindfulness may help.",
-    "Neutral": "Calm and balanced state — great for maintaining steady focus.",
-    "Surprise": "Unexpected reaction captured — spontaneity brings joy, embrace it positively.",
-    "Fear": "Slight anxiety noted — ground yourself through short breaks.",
-    "Disgust": "Avoidance or discomfort emotion detected — shift focus to pleasant experiences.",
-}
-
-if st.session_state["emotion_history"]:
-    current_emotion = st.session_state["emotion_history"][-1]
-    st.success(f"Current Detected Emotion: **{current_emotion}**")
-    st.info(f"📘 Insight: {insight_map.get(current_emotion, 'Stay emotionally aware and balanced!')}")
-else:
-    st.info("No emotion captured yet — take a live photo to generate insights.")
-
-# ---- TEXT EMOTION DETECTOR ----
-# --- Advanced Text Emotion Detector using Hugging Face ---
-st.markdown("<hr>", unsafe_allow_html=True)
-st.header("💬 Text Emotion Detector ")
-st.caption("This module uses a fine-tuned BERT model to classify text into multiple emotional categories such as joy, sadness, anger, love, fear, and surprise. It provides precise emotion and confidence scores using Hugging Face Transformers.")
-
-from transformers import pipeline
-import torch
-
-@st.cache_resource
-def load_emotion_analyzer():
-    try:
-        # You can choose: "bhadresh-savani/distilbert-base-uncased-emotion"
-        # or use "j-hartmann/emotion-english-distilroberta-base" for deeper results
-        return pipeline("text-classification", model="bhadresh-savani/distilbert-base-uncased-emotion", return_all_scores=False)
-    except Exception as e:
-        st.error(f"Model loading failed: {e}")
-        return None
-
-emotion_analyzer = load_emotion_analyzer()
-
-user_input = st.text_area("Type or paste text to analyze emotional tone:")
-
-if st.button("🔍 Analyze Emotion"):
-    if user_input.strip():
-        try:
-            result = emotion_analyzer(user_input)[0]
-            label = result["label"].capitalize()
-            score = result["score"] * 100  # Convert to %
-            
-            emoji_map = {
-                "Joy": "😄",
-                "Sadness": "😢",
-                "Anger": "😠",
-                "Fear": "😨",
-                "Love": "❤️",
-                "Surprise": "😲",
-            }
-            emoji = emoji_map.get(label, "🙂")
-            
-            st.success(f"Detected Emotion: **{label} {emoji}**")
-            st.write(f"Confidence: **{score:.2f}%**")
-
-            # Deeper insight interpretation for academic context
-            insights = {
-                "Joy": "Expresses happiness and contentment — strong positivity detected.",
-                "Sadness": "Conveys low mood or distress — may indicate emotional fatigue.",
-                "Anger": "Associated with frustration or injustice — emotional arousal detected.",
-                "Fear": "Indicates anxiety or threat perception — cautious emotional state.",
-                "Love": "Reflects strong affection or care — socially bonded emotion.",
-                "Surprise": "Suggests unexpected content — cognitive spontaneity evident.",
-            }
-            st.info(f"🧠 NLP Insight: {insights.get(label, 'Balanced emotional tone detected.')}")
-        
-        except Exception as e:
-            st.error(f"Error analyzing emotion: {e}")
+        insights = {
+            "Happy": "Consistently positive mood — reflects engagement and optimism.",
+            "Sad": "Emotional fatigue observed — take short breaks to refresh your mindset.",
+            "Neutral": "Steady and balanced mood — ideal for sustained focus.",
+            "Angry": "Elevated stress — practice calm breathing or step away briefly.",
+            "Fear": "Anxious signals detected — try confidence-building tasks.",
+            "Surprise": "Spike in excitement detected — spontaneous emotional reaction.",
+            "Disgust": "Possible aversion or discomfort — maybe due to content or environment.",
+        }
+        st.info(f"🧩 Insight: {insights.get(dominant, 'Maintain awareness of your current emotional state.')}")
     else:
-        st.warning("Please enter some text to analyze its emotion.")
+        st.warning("No emotions recorded yet. Capture an image to start building the emotion summary.")
 
+    # ---- EMOTION INSIGHTS ----
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.header("🧩 Live Emotion Insights")
+    st.caption("These insights are generated from your most recent camera-based emotion detection.")
+
+    insight_map = {
+        "Happy": "High positivity and mental energy — ideal state for collaboration and focus.",
+        "Sad": "Low mood detected — consider activities like music or fresh air to refresh yourself.",
+        "Angry": "Elevated stress or frustration — deep breathing and mindfulness may help.",
+        "Neutral": "Calm and balanced state — great for maintaining steady focus.",
+        "Surprise": "Unexpected reaction captured — spontaneity brings joy, embrace it positively.",
+        "Fear": "Slight anxiety noted — ground yourself through short breaks.",
+        "Disgust": "Avoidance or discomfort emotion detected — shift focus to pleasant experiences.",
+    }
+
+    if st.session_state["emotion_history"]:
+        current_emotion = st.session_state["emotion_history"][-1]
+        st.success(f"Current Detected Emotion: **{current_emotion}**")
+        st.info(f"📘 Insight: {insight_map.get(current_emotion, 'Stay emotionally aware and balanced!')}")
+    else:
+        st.info("No emotion captured yet — take a live photo to generate insights.")
+# --- Text Emotion Detector Page ---
+elif st.session_state["page_mode"] == "Text Emotion Detector":
+    # --- Advanced Text Emotion Detector using Hugging Face ---
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.header("💬 Text Emotion Detector")
+    st.caption("This module uses a fine-tuned BERT model to classify text into multiple emotional categories such as joy, sadness, anger, love, fear, and surprise. It provides precise emotion and confidence scores using Hugging Face Transformers.")
+
+    from transformers import pipeline
+    import torch
+
+    @st.cache_resource
+    def load_emotion_analyzer():
+        try:
+            # You can choose: "bhadresh-savani/distilbert-base-uncased-emotion"
+            # or use "j-hartmann/emotion-english-distilroberta-base" for deeper results
+            return pipeline("text-classification", model="bhadresh-savani/distilbert-base-uncased-emotion", return_all_scores=False)
+        except Exception as e:
+            st.error(f"Model loading failed: {e}")
+            return None
+
+    emotion_analyzer = load_emotion_analyzer()
+
+    user_input = st.text_area("Type or paste text to analyze emotional tone:")
+
+    if st.button("🔍 Analyze Emotion"):
+        if user_input.strip():
+            try:
+                result = emotion_analyzer(user_input)[0]
+                label = result["label"].capitalize()
+                score = result["score"] * 100  # Convert to %
+                
+                emoji_map = {
+                    "Joy": "😄",
+                    "Sadness": "😢",
+                    "Anger": "😠",
+                    "Fear": "😨",
+                    "Love": "❤️",
+                    "Surprise": "😲",
+                }
+                emoji = emoji_map.get(label, "🙂")
+                
+                st.success(f"Detected Emotion: **{label} {emoji}**")
+                st.write(f"Confidence: **{score:.2f}%**")
+
+                # Deeper insight interpretation for academic context
+                insights = {
+                    "Joy": "Expresses happiness and contentment — strong positivity detected.",
+                    "Sadness": "Conveys low mood or distress — may indicate emotional fatigue.",
+                    "Anger": "Associated with frustration or injustice — emotional arousal detected.",
+                    "Fear": "Indicates anxiety or threat perception — cautious emotional state.",
+                    "Love": "Reflects strong affection or care — socially bonded emotion.",
+                    "Surprise": "Suggests unexpected content — cognitive spontaneity evident.",
+                }
+                st.info(f"🧠 NLP Insight: {insights.get(label, 'Balanced emotional tone detected.')}")
+            
+            except Exception as e:
+                st.error(f"Error analyzing emotion: {e}")
+        else:
+            st.warning("Please enter some text to analyze its emotion.")
+else:
+    st.info("Please choose a detection mode to get started.")
 st.markdown("""
 <hr style="border: 1px solid #ddd;">
 <center>
